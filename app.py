@@ -68,9 +68,8 @@ async def on_ready() -> None:
 async def on_message(message: Message) -> None:
     if message.author == client.user:
         return
-
-    if message.content.startswith("batrouna"):
-        user_message = message.content[len("batrouna"):].strip()
+    if message.content.startswith("gpt"):
+        user_message = message.content[len("gpt"):].strip()
         username = str(message.author)
         channel = str(message.channel)
 
@@ -79,38 +78,73 @@ async def on_message(message: Message) -> None:
     await client.process_commands(message)
 
 
-# JOIN VOICE CHANNEL COMMAND
+## JOIN VOICE CHANNEL COMMAND
 @client.command(name="join")
-async def join(ctx, *, channel_name: str):
-    channel = discord.utils.get(ctx.guild.voice_channels, name=channel_name)
-    if channel:
-        try:
-            if ctx.voice_client is not None:
-                await ctx.voice_client.move_to(channel)
-            else:
-                await channel.connect()
-            await ctx.send(f"Joined {channel_name} voice channel!")
-        except RuntimeError as e:
-            await ctx.send("Failed to connect to the voice channel. Make sure PyNaCl is installed.")
-            print(e)
+async def join(ctx):
+    if not ctx.message.author.voice:
+        await ctx.send("{} is not connected to a voice channel!".format(ctx.message.author.name))
+        return
     else:
-        await ctx.send(f"Voice channel '{channel_name}' not found.")
+        channel = ctx.message.author.voice.channel
+        if ctx.voice_client is not None:
+            if ctx.message.author.voice.channel == ctx.voice_client.channel :
+                await ctx.send("I'm already in {} !".format(ctx.message.author.name))
+            else:
+                await ctx.voice_client.move_to(channel)
+                await ctx.send(f"Joined {channel.name} voice channel!") 
+        else:
+            await channel.connect()
+            await ctx.send(f"Joined {channel.name} voice channel!")    
 
 # LEAVE VOICE CHANNEL COMMAND
 @client.command(name="leave")
-async def leave(ctx):
+async def leave(ctx):     
     if ctx.voice_client is not None:
-        await ctx.voice_client.disconnect()
-        await ctx.send("Disconnected from the voice channel.")
+        if ctx.message.author.voice.channel != ctx.voice_client.channel :
+            await ctx.send("We are not in the same channel {} !".format(ctx.message.author.name))
+            return
+        else:
+            await ctx.voice_client.disconnect()
+            await ctx.send("Disconnected from the voice channel.")
     else:
         await ctx.send("I am not in a voice channel.")
+
+# RESUME MUSIC COMMAND
+@client.command(name='resume', help='Resumes the song')
+async def resume(ctx):
+    voice_client = ctx.message.guild.voice_client
+    if voice_client.is_paused():
+        voice_client.resume()
+    else:
+        await ctx.send("The bot was not playing anything before this. Use /play command!")
+
+# PAUSE MUSIC COMMAND
+@client.command(name='pause', help='This command pauses the song')
+async def pause(ctx):
+    voice_client = ctx.message.guild.voice_client
+    if voice_client.is_playing():
+        voice_client.pause()
+    else:
+        await ctx.send("The bot is not playing anything at the moment.")
 
 # PLAY MUSIC COMMAND
 @client.command(name="play")
 async def play(ctx, *, url: str):
     if ctx.voice_client is None:
-        await ctx.send("I need to be in a voice channel to play music. Use the /join command to invite me to a voice channel.")
-        return
+        if not ctx.message.author.voice:
+            await ctx.send("{} is not connected to a voice channel!".format(ctx.message.author.name))
+            return
+        else:
+            channel = ctx.message.author.voice.channel
+            if ctx.voice_client is not None:
+                if ctx.message.author.voice.channel == ctx.voice_client.channel :
+                    await ctx.send("I'm already in {} !".format(ctx.message.author.name))
+                else:
+                    await ctx.voice_client.move_to(channel)
+                    await ctx.send(f"Joined {channel.name} voice channel!") 
+            else:
+                await channel.connect()
+                await ctx.send(f"Joined {channel.name} voice channel!")  
     
     ydl_opts = {
         'format': 'bestaudio/best',
