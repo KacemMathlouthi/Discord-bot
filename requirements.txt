@@ -1,0 +1,6 @@
+groq
+discord
+python-dotenv
+pynacl
+yt-dlp
+ffmpeg
