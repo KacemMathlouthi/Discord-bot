@@ -27,6 +27,8 @@ groq_client = Groq(api_key=groqtoken)
 
 # MUSIC QUEUE
 music_queue = []
+is_looping = False
+current_song = None
 
 # RESPONSE FUNCTIONALITY
 def get_response(user_input: str) -> str:
@@ -189,8 +191,6 @@ async def play(ctx, url: str):
             music_queue.append({'title': info['title'], 'source': source})
             if not ctx.voice_client.is_playing():
                 await play_next(ctx)
-                embed = discord.Embed(title = f"PLAYING :   {info['title']}", color = discord.Colour.red())
-                await ctx.send(embed=embed, view=MusicControlView(ctx))
             else:
                 embed = discord.Embed(title = f"ADDED TO QUEUE :   {info['title']}", color = discord.Colour.red())
                 await ctx.send(embed=embed)
@@ -207,12 +207,18 @@ async def play(ctx, url: str):
             await play(ctx, url=url)
 
 async def play_next(ctx):
-    if music_queue:
-        song = music_queue.pop(0)
-        ctx.voice_client.play(song['source'])
+    global is_looping, current_song
 
+    if is_looping and current_song:
+        ctx.voice_client.play(current_song['source'], after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
+    elif music_queue:
+        song = music_queue.pop(0)
+        current_song = song
+        ctx.voice_client.play(song['source'], after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
+        embed = discord.Embed(title = f"PLAYING :  {song['title']}", color = discord.Colour.red())
+        await ctx.send(embed=embed, view=MusicControlView(ctx))
     else:
-        await ctx.send("Queue is empty, add more songs!")
+        await ctx.send("Queue is **empty**, add more songs!")
 
 # SKIP MUSIC COMMAND
 @client.command(name='skip', help='This command skips to the next song in the queue')
@@ -231,26 +237,48 @@ async def queue(ctx):
     else:
         await ctx.send("The queue is currently empty.")
 
+@client.command(name="clear", help="Clears the current music queue")
+async def clear(ctx):
+    global music_queue
+    music_queue = []
+    await ctx.send("music queue cleared!")
+
 # SEARCH YOUTUBE COMMAND
-@client.command(name="search", help="Searches for a song on YouTube")
+@client.command(name="search")
 async def search(ctx, *, query: str):
     ydl_opts = {
         'format': 'bestaudio/best',
         'quiet': True,
-        'default_search': 'ytsearch1',
+        'default_search': 'ytsearch5',
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(query, download=False)
         results = info['entries']
-        k=[]
-        for i in range(5):
-            url = i['webpage_url']
-            title = i['title']
-            k.append(i)
 
-        queue_list = "\n".join([f"{idx + 1}. {song['title']}" for idx, song in enumerate(k)])
-        await ctx.send(f"**TOP 5 Youtube Videos:**\n{queue_list}")
+        if not results:
+            await ctx.send("No results found.")
+            return
+
+        queue_list = "\n".join([f"{idx + 1}. [{entry['title']}]({entry['webpage_url']})" for idx, entry in enumerate(results[:5])])
+        await ctx.send(f"**Top 5 YouTube results for '{query}':**\n{queue_list}")
+
+# LOOP MUSIC COMMAND
+@client.command(name='loop')
+async def loop(ctx):
+    global is_looping, current_song
+
+    if ctx.voice_client is None or not ctx.voice_client.is_playing():
+        await ctx.send("No song is currently playing.")
+        return
+
+    if not is_looping:
+        is_looping = True
+        current_song = music_queue[0] if music_queue else None
+        await ctx.send("Looping the current song.")
+    else:
+        is_looping = False
+        await ctx.send("Stopped looping the current song.")
 
 # LYRICS COMMAND
 @client.command(name="lyrics", help="Fetches the lyrics for the currently playing song")
@@ -284,14 +312,24 @@ urls=['https://www.youtube.com/watch?v=8y4FtO0J4rU',
       'https://www.youtube.com/watch?v=VIVzi7rUDBA',
       'https://www.youtube.com/watch?v=Na9jREuExmU',
       'https://www.youtube.com/watch?v=JEWWmx8jKCk',]
+
+def add_to_queue(url: str):
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'quiet': True,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        source = discord.FFmpegPCMAudio(info['url'], **ffmpeg_opts)
+        music_queue.append({'title': info['title'], 'source': source})
+
 @client.command(name="jalel")
 async def jalel(ctx):
-    l=[]
-    for i in range(0, len(urls)):
-        l.append(urls[i])
-    shuffle(l)
-    for i in l:
-        await play(ctx, i)
+    shuffle(urls)
+    await play(ctx, urls[0])
+    for url in range(1, 3):
+        add_to_queue(urls[url])
+
 
 
 ##################  GAMES  ######
@@ -300,7 +338,7 @@ async def jalel(ctx):
 @client.command(name="dice")
 async def dice(ctx):
     nb = randint(0,5)
-    nb_list=[':one:',':two:',':three:' ,':four:', ':five:', ':six']
+    nb_list=[':one:',':two:',':three:' ,':four:', ':five:', ':six:']
     await ctx.send(nb_list[nb])
 
 # ROCK PAPER SCISSORS COMMAND
@@ -392,8 +430,9 @@ async def help_command(ctx):
         ("/pause", "Pause the current song"),
         ("/resume", "Resume the paused song"),
         ("/skip", "Skip to the next song in the queue"),
-        ("/loop", "Play the current song in loop forever"),
+        ("/loop", "Play the current song in loop until /loop again"),
         ("/queue", "Display the current music queue"),
+        ("/clear", "Clear the current music queue"),
         ("/help", "Display this message"),
         ("/dice", "Get a number from 1 to 6"),
         ("/rps", "Rock-Paper-Scissors Game Co-op")
@@ -407,11 +446,11 @@ async def help_command(ctx):
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         await ctx.send(
-            'Invalid Command. Type /help, **nikomok**.')
+            'Invalid Command. Type /help, Retry.')
 
     if isinstance(error, commands.MissingRequiredArgument):
         await ctx.send(
-            'An Argument is Missing, **nikomok**.')
+            'An Argument is Missing, Retry.')
 
 # MAIN ENTRY POINT
 def main() -> None:
