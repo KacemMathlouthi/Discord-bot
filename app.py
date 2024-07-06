@@ -30,6 +30,12 @@ music_queue = []
 is_looping = False
 current_song = None
 
+#FFPMEG OPTIONS LOCK
+ffmpeg_opts = {
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn',
+}
+
 # RESPONSE FUNCTIONALITY
 def get_response(user_input: str) -> str:
     chat_completion = groq_client.chat.completions.create(
@@ -170,10 +176,6 @@ class MusicControlView(View):
         else:
             await interaction.response.send_message("Not in a voice channel !", ephemeral=True)
 
-ffmpeg_opts = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn',
-}
 # PLAY MUSIC COMMAND WITH BUTTONS
 @client.command(name="play")
 async def play(ctx, url: str):
@@ -332,7 +334,7 @@ async def jalel(ctx):
 
 
 
-##################  GAMES  ######
+##################  GAMES  #####################################
 
 # DICE COMMAND
 @client.command(name="dice")
@@ -375,7 +377,7 @@ class RPSView(View):
     def __init__(self, game):
         super().__init__(timeout=None)
         self.game = game
-    @discord.ui.button(label='Rock', style=discord.ButtonStyle.grey, emoji='🥔')
+    @discord.ui.button(label='Rock', style=discord.ButtonStyle.grey, emoji='🧱')
     async def rock(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.handle_choice(interaction, "rock")
     @discord.ui.button(label='Paper', style=discord.ButtonStyle.grey, emoji='🧻')
@@ -384,6 +386,16 @@ class RPSView(View):
     @discord.ui.button(label='Scissors', style=discord.ButtonStyle.grey, emoji='✂️')
     async def scissors(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.handle_choice(interaction, "scissors")
+    @discord.ui.button(label='JOIN', style=discord.ButtonStyle.green, custom_id='join')
+    async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if len(self.game.players) == 0 or (len(self.game.players) == 1 and interaction.user != self.game.players[0]):
+            self.game.add_player(interaction.user)
+            button.disabled = True
+            await interaction.response.edit_message(view=self)
+            await interaction.followup.send(f"{interaction.user.mention} has joined the game!")
+        else:
+            await interaction.response.send_message("You can't join this game!", ephemeral=True)
+
     async def handle_choice(self, interaction: discord.Interaction, choice: str):
         player = interaction.user
         if player not in self.game.players:
@@ -395,10 +407,14 @@ class RPSView(View):
 
         if self.game.is_ready():
             winner = self.game.determine_winner()
+            p1, p2 = self.game.players
+            c1, c2 = self.game.choices[p1], self.game.choices[p2]
+            d={'rock':':bricks:', 'paper':':roll_of_paper:', 'scissors':':scissors:' }
+            await interaction.followup.send(f"{p1.mention}{d[c1]}  **--**  {p2.mention}{d[c2]}")
             if winner:
-                await interaction.followup.send(f"{winner.mention} wins!")
+                await interaction.followup.send(f"{winner.mention} **wins** !")
             else:
-                await interaction.followup.send("It's a tie!")
+                await interaction.followup.send("It's a **tie** !")
             self.stop()
 
 @client.command(name="rps")
@@ -407,17 +423,100 @@ async def start_rps(ctx):
     view = RPSView(game)
 
     game.add_player(ctx.author)
-    await ctx.send("Rock-Paper-Scissors game started! Another player must type **'join'**", view=view)
+    await ctx.send("Rock-Paper-Scissors game started! Another player must join !", view=view)
 
-    def check(message):
-        return message.content.lower() == "join" and message.author != ctx.author
 
-    try:
-        join_message = await client.wait_for('message', check=check, timeout=60)
-        game.add_player(join_message.author)
-        await ctx.send(f"{join_message.author.mention} has joined the game!")
-    except asyncio.TimeoutError:
-        await ctx.send("No one joined the game in time. No friends ?")
+
+# XOXO GAME
+class TicTacToeButton(Button):
+    def __init__(self, x, y):
+        super().__init__(style=discord.ButtonStyle.secondary, label='\u200b', row=y)
+        self.x = x
+        self.y = y
+
+    async def callback(self, interaction: discord.Interaction):
+        view: TicTacToe = self.view
+        if interaction.user != view.players[view.current_player]:
+            await interaction.response.send_message("It's not your turn !", ephemeral=True)
+            return
+
+        state = view.board[self.y][self.x]
+        if state in ('X', 'O'):
+            return
+
+        if view.current_player == 0:
+            self.style = discord.ButtonStyle.danger
+            self.label = 'X'
+            self.disabled = True
+            view.board[self.y][self.x] = 'X'
+            view.current_player = 1
+        else:
+            self.style = discord.ButtonStyle.success
+            self.label = 'O'
+            self.disabled = True
+            view.board[self.y][self.x] = 'O'
+            view.current_player = 0
+
+        winner = view.check_winner()
+        if winner is not None:
+            for child in view.children:
+                child.disabled = True
+            await interaction.response.edit_message(content=f'{view.players[winner].mention} **wins** !', view=view)
+        elif view.is_full():
+            for child in view.children:
+                child.disabled = True
+            await interaction.response.edit_message(content='It\'s a **tie** !', view=view)
+        else:
+            await interaction.response.edit_message(view=view)
+
+
+class TicTacToe(View):
+    def __init__(self, player1):
+        super().__init__()
+        self.current_player = 0
+        self.board = [[None] * 3 for _ in range(3)]
+        self.players = [player1, None]
+        for y in range(3):
+            for x in range(3):
+                self.add_item(TicTacToeButton(x, y))
+        self.join_button = Button(label="JOIN", style=discord.ButtonStyle.primary)
+        self.join_button.callback = self.join_game
+        self.add_item(self.join_button)
+
+    async def join_game(self, interaction: discord.Interaction):
+        if self.players[1] is None and interaction.user != self.players[0]:
+            self.players[1] = interaction.user
+            self.join_button.disabled = True
+            await interaction.response.edit_message(content=f'{self.players[0].mention}:regional_indicator_x: **VS** {self.players[1].mention}:regional_indicator_o: : Game starts now!', view=self)
+        else:
+            await interaction.response.send_message("You can't join this game !", ephemeral=True)
+
+    def check_winner(self):
+        for line in self.board:
+            if line[0] == line[1] == line[2] and line[0] is not None:
+                return 0 if line[0] == 'X' else 1
+
+        for col in range(3):
+            if self.board[0][col] == self.board[1][col] == self.board[2][col] and self.board[0][col] is not None:
+                return 0 if self.board[0][col] == 'X' else 1
+
+        if self.board[0][0] == self.board[1][1] == self.board[2][2] and self.board[0][0] is not None:
+            return 0 if self.board[0][0] == 'X' else 1
+
+        if self.board[0][2] == self.board[1][1] == self.board[2][0] and self.board[0][2] is not None:
+            return 0 if self.board[0][2] == 'X' else 1
+
+        return None
+
+    def is_full(self):
+        return all(all(cell is not None for cell in row) for row in self.board)
+
+
+@client.command(name='xo')
+async def tic_tac_toe(ctx):
+    view = TicTacToe(ctx.author)
+    await ctx.send('Tic-Tac-Toe: **X** goes first. Click the button below to join as **O**.', view=view)
+
 
 # HELP COMMAND
 @client.command(name="help", help="Displays this message")
@@ -435,7 +534,8 @@ async def help_command(ctx):
         ("/clear", "Clear the current music queue"),
         ("/help", "Display this message"),
         ("/dice", "Get a number from 1 to 6"),
-        ("/rps", "Rock-Paper-Scissors Game Co-op")
+        ("/rps", "Rock-Paper-Scissors Game Co-op"),
+        ("/xo", "Tic-Tac-Toe Game Co-op")
     ]
     for name, desc in commands_list:
         embed.add_field(name=name, value=desc, inline=False)
