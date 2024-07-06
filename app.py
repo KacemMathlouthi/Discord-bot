@@ -11,6 +11,7 @@ import asyncio
 import requests
 from random import randint
 from random import shuffle
+import random
 
 # LOAD OUR TOKEN FROM SOMEWHERE SAFE
 load_dotenv()
@@ -518,6 +519,49 @@ async def tic_tac_toe(ctx):
     await ctx.send('Tic-Tac-Toe: **X** goes first. Click the button below to join as **O**.', view=view)
 
 
+@client.command(name="rr", help="Russian Roulette: Disconnects a random user from the voice channel with enhanced visual effects.")
+async def russian_roulette(ctx):
+    if not ctx.author.voice:
+        await ctx.send(embed=discord.Embed(title="Russian Roulette", description="You are not connected to a voice channel! Please join one to play Russian Roulette.", color=discord.Color.red()))
+        return
+
+    voice_channel = ctx.author.voice.channel
+    members = voice_channel.members
+
+    if len(members) <= 1:
+        await ctx.send(embed=discord.Embed(title="Russian Roulette", description="Not enough players in the voice channel! Need at least two to play Russian Roulette.", color=discord.Color.orange()))
+        return
+
+    # Enhanced countdown using embeds
+    embed = discord.Embed(title="🎲 Russian Roulette", description="Starting Russian Roulette in 3...", color=discord.Color.blue())
+    countdown_message = await ctx.send(embed=embed)
+    for second in range(2, 0, -1):
+        await asyncio.sleep(1)
+        embed.description = f"Starting Russian Roulette in {second}..."
+        await countdown_message.edit(embed=embed)
+    await asyncio.sleep(1)
+    embed.description = "🎯 **FIRE!**"
+    await countdown_message.edit(embed=embed)
+
+    # Dramatic result animation
+    await asyncio.sleep(1)
+    chosen_member = random.choice(members)  # Random selection
+    for _ in range(5):  # Number of cycles through names
+        for member in members:
+            embed.description = f"Selecting... {member.display_name}"
+            await countdown_message.edit(embed=embed)
+            await asyncio.sleep(0.5)  # Adjust timing for effect
+
+    # Final selection display
+    embed = discord.Embed(title="⚡️ Selected for Disconnection", description=f"{chosen_member.mention} has been selected!", color=discord.Color.gold())
+    await countdown_message.edit(embed=embed)
+    await asyncio.sleep(2)  # Dramatic pause
+
+    # Disconnect the selected member
+    await chosen_member.move_to(None)
+    embed = discord.Embed(title="🚪 Disconnected", description=f"{chosen_member.display_name} has been disconnected from the voice channel!", color=discord.Color.green())
+    await countdown_message.edit(embed=embed)
+    
 # HELP COMMAND
 @client.command(name="help", help="Displays this message")
 async def help_command(ctx):
