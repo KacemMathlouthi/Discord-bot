@@ -6,4 +6,5 @@ yt-dlp
 ffmpeg
 pandas
 seaborn
-matplotlibdatetime
+matplotlib
+datetime
