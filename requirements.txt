@@ -4,4 +4,6 @@ python-dotenv
 pynacl
 yt-dlp
 ffmpeg
-datetime
+pandas
+seaborn
+matplotlibdatetime
