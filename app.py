@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from discord import Intents, Client, Message, VoiceChannel, ButtonStyle, Interaction, Embed, app_commands, utils
-from discord.ext import commands
+from discord.ext import commands, tasks
 import discord
 from discord.ui import Button, View
 from groq import Groq
@@ -11,6 +11,7 @@ import asyncio
 import requests
 from random import randint
 from random import shuffle
+from datetime import datetime, timedelta
 
 # LOAD OUR TOKEN FROM SOMEWHERE SAFE
 load_dotenv()
@@ -91,7 +92,42 @@ async def on_message(message: Message) -> None:
         await send_message(message, user_message)
     await client.process_commands(message)
 
-# JOIN VOICE CHANNEL COMMAND
+# SET ALARM COMMAND
+@client.command(name='setalarm')
+async def set_alarm(ctx, time: str, name):
+
+    try:
+
+        alarm_time = datetime.strptime(time, "%H:%M").time()
+        
+
+        now = datetime.now().time()
+        
+
+        now_seconds = now.hour * 3600 + now.minute * 60 + now.second
+        alarm_seconds = alarm_time.hour * 3600 + alarm_time.minute * 60
+        
+
+        if alarm_seconds <= now_seconds:
+            alarm_seconds += 86400
+        
+        wait_time = alarm_seconds - now_seconds
+        
+
+        wait_time = timedelta(seconds=wait_time)
+        
+        await ctx.send(f'Alarm set for {time}.')
+        
+
+        await asyncio.sleep(wait_time.total_seconds())
+        
+
+        await ctx.send(f'{ctx.author.mention} Alarm! {name}.')
+        
+    except ValueError:
+        await ctx.send("Invalid time format. Please use hh:mm format.")
+
+# JOIN COMMAND
 @client.command(name="join")
 async def join(ctx):
     if not ctx.message.author.voice:
@@ -107,16 +143,15 @@ async def join(ctx):
 @client.command(name="leave")
 async def leave(ctx):     
     if ctx.voice_client is not None:
-        if ctx.message.author.voice.channel != ctx.voice_client.channel :
-            await ctx.send("Not in the same channel {} !".format(ctx.message.author.name))
-            return
+        if ctx.message.author.voice.channel != ctx.voice_client.channel:
+            await ctx.send(f"Not in the same channel {ctx.message.author.name}!")
         else:
             await ctx.voice_client.disconnect()
     else:
         await ctx.send("Not in a voice channel.")
 
 # RESUME MUSIC COMMAND
-@client.command(name='resume', help='Resumes the song')
+@client.command(name='resume')
 async def resume(ctx):
     voice_client = ctx.message.guild.voice_client
     if voice_client.is_paused():
@@ -144,12 +179,12 @@ async def stop(ctx):
 
 
 # VIEW CLASS FOR BUTTONS
-class MusicControlView(View):
+class MusicControlView(discord.ui.View):
     def __init__(self, ctx):
         super().__init__(timeout=None)
         self.ctx = ctx
 
-    @discord.ui.button(emoji="⏯", style=ButtonStyle.grey, custom_id="pauseplay_button")
+    @discord.ui.button(emoji="⏯", style=discord.ButtonStyle.grey, custom_id="pauseplay_button")
     async def pause_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.guild.voice_client.is_playing():
             interaction.guild.voice_client.pause()
@@ -158,14 +193,14 @@ class MusicControlView(View):
             interaction.guild.voice_client.resume()
             await interaction.response.send_message(":play_pause: **Resumed**", ephemeral=True)
         else:
-            await interaction.response.send_message("Not playing anything at the moment !", ephemeral=True)
+            await interaction.response.send_message("Not playing anything at the moment!", ephemeral=True)
 
-    @discord.ui.button(emoji="⏭", style=ButtonStyle.grey, custom_id="skip_button")
+    @discord.ui.button(emoji="⏭", style=discord.ButtonStyle.grey, custom_id="skip_button")
     async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(":fast_forward: **Skipped**", ephemeral=True)
         await skip(self.ctx)
 
-    @discord.ui.button(emoji="<:reacttrash:878915749375246336>", style=ButtonStyle.secondary, custom_id="leave_button")
+    @discord.ui.button(emoji="<:reacttrash:878915749375246336>", style=discord.ButtonStyle.secondary, custom_id="leave_button")
     async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.guild.voice_client is not None:
             if interaction.user.voice is None or interaction.user.voice.channel != interaction.guild.voice_client.channel:
@@ -174,28 +209,25 @@ class MusicControlView(View):
                 await interaction.guild.voice_client.disconnect()
                 await interaction.response.send_message("⛔️ **Disconnected**", ephemeral=True)
         else:
-            await interaction.response.send_message("Not in a voice channel !", ephemeral=True)
+            await interaction.response.send_message("Not in a voice channel!", ephemeral=True)
 
-# PLAY MUSIC COMMAND WITH BUTTONS
+# PLAY MUSIC COMMAND
 @client.command(name="play")
 async def play(ctx, url: str):
     await join(ctx)
     
     if url.startswith("https://www.youtube.com/"):
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'quiet': True,
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            url2 = info['url']
-            source = discord.FFmpegPCMAudio(url2, **ffmpeg_opts)
-            music_queue.append({'title': info['title'], 'source': source})
-            if not ctx.voice_client.is_playing():
-                await play_next(ctx)
-            else:
-                embed = discord.Embed(title = f"ADDED TO QUEUE :   {info['title']}", color = discord.Colour.red())
-                await ctx.send(embed=embed)
+        add_to_queue(url)
+        if not ctx.voice_client.is_playing():
+            await play_next(ctx)
+        else:
+            info = music_queue[-1]
+            embed = discord.Embed(
+                title="Added to Queue",
+                description=f"**Title:** {info['title']}\n**Duration:** {info['duration']}\n**Position in Queue:** {len(music_queue)}",
+                color=discord.Color.red()
+            )
+            await ctx.send(embed=embed)
     else:
         ydl_opts = {
             'format': 'bestaudio/best',
@@ -217,10 +249,15 @@ async def play_next(ctx):
         song = music_queue.pop(0)
         current_song = song
         ctx.voice_client.play(song['source'], after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
-        embed = discord.Embed(title = f"PLAYING :  {song['title']}", color = discord.Colour.red())
+        embed = discord.Embed(
+            title="Now Playing",
+            description=f"**Title:** {song['title']}\n**Duration:** {song['duration']}",
+            color=discord.Color.red()
+        )
         await ctx.send(embed=embed, view=MusicControlView(ctx))
     else:
-        await ctx.send("Queue is **empty**, add more songs!")
+        embed = discord.Embed(title="Queue is empty, add more songs!", color=discord.Color.red())
+        await ctx.send(embed=embed)
 
 # SKIP MUSIC COMMAND
 @client.command(name='skip', help='This command skips to the next song in the queue')
@@ -230,22 +267,40 @@ async def skip(ctx):
         voice_client.stop()
     await play_next(ctx)
 
-# MUSIC QUEUE COMMAND
-@client.command(name="queue", help="Displays the current music queue")
+# QUEUE DISPLAY COMMAND
+@client.command(name="queue")
 async def queue(ctx):
     if music_queue:
-        queue_list = "\n".join([f"{idx + 1}. {song['title']}" for idx, song in enumerate(music_queue)])
-        await ctx.send(f"**Current queue:**\n{queue_list}")
-    else:
-        await ctx.send("The queue is currently empty.")
+        embed = discord.Embed(
+            title="🎶 Current Music Queue 🎶",
+            color=discord.Color.blue()
+        )
 
+        for idx, song in enumerate(music_queue, start=1):
+            embed.add_field(
+                name=f"{idx}. {song['title']}",
+                value=f"**Duration:** {song['duration']}",
+                inline=False
+            )
+        
+        embed.set_footer(text=f"Total songs in queue: {len(music_queue)}")
+        await ctx.send(embed=embed)
+    else:
+        embed = discord.Embed(
+            title="🎶 Current Music Queue 🎶",
+            description="The queue is currently empty.",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed)
+
+# CLEAR QUEUE COMMAND
 @client.command(name="clear", help="Clears the current music queue")
 async def clear(ctx):
     global music_queue
     music_queue = []
-    await ctx.send("music queue cleared!")
+    await ctx.send("Music queue cleared!")
 
-# SEARCH YOUTUBE COMMAND
+# SEARCH MUSIC COMMAND
 @client.command(name="search")
 async def search(ctx, *, query: str):
     ydl_opts = {
@@ -259,28 +314,58 @@ async def search(ctx, *, query: str):
         results = info['entries']
 
         if not results:
-            await ctx.send("No results found.")
+            embed = discord.Embed(
+                title="🔍 YouTube Search Results",
+                description=f"No results found for '{query}'.",
+                color=discord.Color.red()
+            )
+            await ctx.send(embed=embed)
             return
 
-        queue_list = "\n".join([f"{idx + 1}. [{entry['title']}]({entry['webpage_url']})" for idx, entry in enumerate(results[:5])])
-        await ctx.send(f"**Top 5 YouTube results for '{query}':**\n{queue_list}")
+        embed = discord.Embed(
+            title=f"🔍 Top 5 YouTube Results for '{query}'",
+            color=discord.Color.green()
+        )
 
-# LOOP MUSIC COMMAND
+        for idx, entry in enumerate(results[:5], start=1):
+            title = entry['title']
+            duration = entry.get('duration')
+            duration_formatted = f"{duration // 60}:{duration % 60:02d}" if duration else "N/A"
+            url = entry['webpage_url']
+            embed.add_field(
+                name=f"{idx}. {title}",
+                value=f"**Duration:** {duration_formatted}\n[Watch]({url})",
+                inline=False
+            )
+        
+        await ctx.send(embed=embed)
+
+# LOOP CURRENT MUSIC COMMAND
 @client.command(name='loop')
 async def loop(ctx):
-    global is_looping, current_song
+    global is_looping
 
     if ctx.voice_client is None or not ctx.voice_client.is_playing():
         await ctx.send("No song is currently playing.")
         return
 
-    if not is_looping:
-        is_looping = True
-        current_song = music_queue[0] if music_queue else None
+    is_looping = not is_looping
+    if is_looping:
         await ctx.send("Looping the current song.")
     else:
-        is_looping = False
         await ctx.send("Stopped looping the current song.")
+
+
+def add_to_queue(url: str):
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'quiet': True,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        duration = str(info['duration'] // 60) + ":" + str(info['duration'] % 60)
+        source = discord.FFmpegPCMAudio(info['url'], **ffmpeg_opts)
+        music_queue.append({'title': info['title'], 'duration': duration, 'source': source})
 
 # LYRICS COMMAND
 @client.command(name="lyrics", help="Fetches the lyrics for the currently playing song")
@@ -315,16 +400,7 @@ urls=['https://www.youtube.com/watch?v=8y4FtO0J4rU',
       'https://www.youtube.com/watch?v=Na9jREuExmU',
       'https://www.youtube.com/watch?v=JEWWmx8jKCk',]
 
-def add_to_queue(url: str):
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'quiet': True,
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        source = discord.FFmpegPCMAudio(info['url'], **ffmpeg_opts)
-        music_queue.append({'title': info['title'], 'source': source})
-
+# JALEL COMMAND
 @client.command(name="jalel")
 async def jalel(ctx):
     shuffle(urls)
@@ -342,6 +418,7 @@ async def dice(ctx):
     nb = randint(0,5)
     nb_list=[':one:',':two:',':three:' ,':four:', ':five:', ':six:']
     await ctx.send(nb_list[nb])
+
 
 # ROCK PAPER SCISSORS COMMAND
 
@@ -392,7 +469,7 @@ class RPSView(View):
             self.game.add_player(interaction.user)
             button.disabled = True
             await interaction.response.edit_message(view=self)
-            await interaction.followup.send(f"{interaction.user.mention} has joined the game!")
+            await interaction.followup.edit_message(f"{interaction.user.mention} has joined the game!", view=self)
         else:
             await interaction.response.send_message("You can't join this game!", ephemeral=True)
 
@@ -410,7 +487,7 @@ class RPSView(View):
             p1, p2 = self.game.players
             c1, c2 = self.game.choices[p1], self.game.choices[p2]
             d={'rock':':bricks:', 'paper':':roll_of_paper:', 'scissors':':scissors:' }
-            await interaction.followup.send(f"{p1.mention}{d[c1]}  **--**  {p2.mention}{d[c2]}")
+            await interaction.response.edit_message(f"{p1.mention}{d[c1]}  **--**  {p2.mention}{d[c2]}", view=self)
             if winner:
                 await interaction.followup.send(f"{winner.mention} **wins** !")
             else:
@@ -532,10 +609,11 @@ async def help_command(ctx):
         ("/loop", "Play the current song in loop until /loop again"),
         ("/queue", "Display the current music queue"),
         ("/clear", "Clear the current music queue"),
-        ("/help", "Display this message"),
+        ("/setalarm (hh:mm) (name)", "Set an alarm for you"),
         ("/dice", "Get a number from 1 to 6"),
         ("/rps", "Rock-Paper-Scissors Game Co-op"),
-        ("/xo", "Tic-Tac-Toe Game Co-op")
+        ("/xo", "Tic-Tac-Toe Game Co-op"),
+        ("/help", "Display this message")
     ]
     for name, desc in commands_list:
         embed.add_field(name=name, value=desc, inline=False)
