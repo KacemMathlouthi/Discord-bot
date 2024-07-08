@@ -3,10 +3,7 @@ from dotenv import load_dotenv
 from discord import Intents, Client, Message, VoiceChannel, ButtonStyle, Interaction, Embed, app_commands, utils
 from discord.ext import commands, tasks
 import discord
-from discord.ui import Button, View
 from groq import Groq
-import yt_dlp
-from yt_dlp import YoutubeDL
 import asyncio
 import requests
 from random import randint
@@ -17,31 +14,24 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 from io import BytesIO
-from datetime import datetime, timedelta
+
+
 
 # LOAD OUR TOKEN FROM SOMEWHERE SAFE
 load_dotenv()
 dstoken = os.getenv("discord_token")
 groqtoken = os.getenv("groq_token")
 
+
 # BOT SETUP
 intents = Intents.default()
 intents.message_content = True 
 client = commands.Bot(command_prefix="/", help_command=None, intents=intents)
 
+
 # GROQ SETUP
 groq_client = Groq(api_key=groqtoken)
 
-# MUSIC QUEUE
-music_queue = []
-is_looping = False
-current_song = None
-
-#FFPMEG OPTIONS LOCK
-ffmpeg_opts = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn',
-}
 
 # RESPONSE FUNCTIONALITY
 def get_response(user_input: str) -> str:
@@ -65,6 +55,7 @@ def get_response(user_input: str) -> str:
     )
     return chat_completion.choices[0].message.content
 
+
 # MESSAGE FUNCTIONALITY
 async def send_message(message: Message, user_message: str) -> None:
     if not user_message:
@@ -77,11 +68,20 @@ async def send_message(message: Message, user_message: str) -> None:
     except Exception as e:
         print(e)
 
+
 # HANDLING THE STARTUP FOR OUR BOT
 @client.event
 async def on_ready() -> None:
     await client.change_presence(status=discord.Status.online, activity=discord.Game('/help'))
+    await load_cogs()
     print(f'{client.user} is now running!')
+
+
+# LOAD COGS
+async def load_cogs():
+    for filename in os.listdir('./cogs'):
+        if filename.endswith('.py') and filename != '__init__.py':
+            await client.load_extension(f'cogs.{filename[:-3]}')
 
 
 # HANDLING INCOMING MESSAGES
@@ -98,507 +98,10 @@ async def on_message(message: Message) -> None:
         await send_message(message, user_message)
     await client.process_commands(message)
 
-# SET ALARM COMMAND
-@client.command(name='setalarm')
-async def set_alarm(ctx, time: str, name):
 
-    try:
 
-        alarm_time = datetime.strptime(time, "%H:%M").time()
-        
 
-        now = datetime.now().time()
-        
 
-        now_seconds = now.hour * 3600 + now.minute * 60 + now.second
-        alarm_seconds = alarm_time.hour * 3600 + alarm_time.minute * 60
-        
-
-        if alarm_seconds <= now_seconds:
-            alarm_seconds += 86400
-        
-        wait_time = alarm_seconds - now_seconds
-        
-
-        wait_time = timedelta(seconds=wait_time)
-        
-        await ctx.send(f'Alarm set for {time}.')
-        
-
-        await asyncio.sleep(wait_time.total_seconds())
-        
-
-        await ctx.send(f'{ctx.author.mention} Alarm! {name}.')
-        
-    except ValueError:
-        await ctx.send("Invalid time format. Please use hh:mm format.")
-
-# JOIN COMMAND
-@client.command(name="join")
-async def join(ctx):
-    if not ctx.message.author.voice:
-        await ctx.send("{} is not connected to a voice channel!".format(ctx.message.author.name))
-    else:
-        channel = ctx.message.author.voice.channel
-        if ctx.voice_client is not None:
-            await ctx.voice_client.move_to(channel)
-        else:
-            await channel.connect()
-
-# LEAVE VOICE CHANNEL COMMAND
-@client.command(name="leave")
-async def leave(ctx):     
-    if ctx.voice_client is not None:
-        if ctx.message.author.voice.channel != ctx.voice_client.channel:
-            await ctx.send(f"Not in the same channel {ctx.message.author.name}!")
-        else:
-            await ctx.voice_client.disconnect()
-    else:
-        await ctx.send("Not in a voice channel.")
-
-# RESUME MUSIC COMMAND
-@client.command(name='resume')
-async def resume(ctx):
-    voice_client = ctx.message.guild.voice_client
-    if voice_client.is_paused():
-        voice_client.resume()
-    else:
-        await ctx.send("Not playing anything before this. Use /play command!")
-
-# PAUSE MUSIC COMMAND
-@client.command(name='pause', help='This command pauses the song')
-async def pause(ctx):
-    voice_client = ctx.message.guild.voice_client
-    if voice_client.is_playing():
-        voice_client.pause()
-    else:
-        await ctx.send("The bot is not playing anything at the moment.")
-
-# STOP MUSIC COMMAND
-@client.command(name='stop', help='This command stops the song')
-async def stop(ctx):
-    voice_client = ctx.message.guild.voice_client
-    if voice_client.is_playing():
-        voice_client.stop()
-    else:
-        await ctx.send("The bot is not playing anything at the moment.")
-
-
-# VIEW CLASS FOR BUTTONS
-class MusicControlView(discord.ui.View):
-    def __init__(self, ctx):
-        super().__init__(timeout=None)
-        self.ctx = ctx
-
-    @discord.ui.button(emoji="⏯", style=discord.ButtonStyle.grey, custom_id="pauseplay_button")
-    async def pause_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.guild.voice_client.is_playing():
-            interaction.guild.voice_client.pause()
-            await interaction.response.send_message(":pause_button: **Paused**", ephemeral=True)
-        elif interaction.guild.voice_client is not None and interaction.guild.voice_client.is_paused():
-            interaction.guild.voice_client.resume()
-            await interaction.response.send_message(":play_pause: **Resumed**", ephemeral=True)
-        else:
-            await interaction.response.send_message("Not playing anything at the moment!", ephemeral=True)
-
-    @discord.ui.button(emoji="⏭", style=discord.ButtonStyle.grey, custom_id="skip_button")
-    async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(":fast_forward: **Skipped**", ephemeral=True)
-        await skip(self.ctx)
-
-    @discord.ui.button(emoji="<:reacttrash:878915749375246336>", style=discord.ButtonStyle.secondary, custom_id="leave_button")
-    async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.guild.voice_client is not None:
-            if interaction.user.voice is None or interaction.user.voice.channel != interaction.guild.voice_client.channel:
-                await interaction.response.send_message("Not in the same channel!", ephemeral=True)
-            else:
-                await interaction.guild.voice_client.disconnect()
-                await interaction.response.send_message("⛔️ **Disconnected**", ephemeral=True)
-        else:
-            await interaction.response.send_message("Not in a voice channel!", ephemeral=True)
-
-# PLAY MUSIC COMMAND
-@client.command(name="play")
-async def play(ctx, url: str):
-    await join(ctx)
-    
-    if url.startswith("https://www.youtube.com/"):
-        add_to_queue(url)
-        if not ctx.voice_client.is_playing():
-            await play_next(ctx)
-        else:
-            info = music_queue[-1]
-            embed = discord.Embed(
-                title="Added to Queue",
-                description=f"**Title:** {info['title']}\n**Duration:** {info['duration']}\n**Position in Queue:** {len(music_queue)}",
-                color=discord.Color.red()
-            )
-            await ctx.send(embed=embed)
-    else:
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'quiet': True,
-            'default_search': 'ytsearch1',
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            first_result = info['entries'][0]
-            url = first_result['webpage_url']
-            await play(ctx, url=url)
-
-async def play_next(ctx):
-    global is_looping, current_song
-
-    if is_looping and current_song:
-        ctx.voice_client.play(current_song['source'], after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
-    elif music_queue:
-        song = music_queue.pop(0)
-        current_song = song
-        ctx.voice_client.play(song['source'], after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
-        embed = discord.Embed(
-            title="Now Playing",
-            description=f"**Title:** {song['title']}\n**Duration:** {song['duration']}",
-            color=discord.Color.red()
-        )
-        await ctx.send(embed=embed, view=MusicControlView(ctx))
-    else:
-        embed = discord.Embed(title="Queue is empty, add more songs!", color=discord.Color.red())
-        await ctx.send(embed=embed)
-
-# SKIP MUSIC COMMAND
-@client.command(name='skip', help='This command skips to the next song in the queue')
-async def skip(ctx):
-    voice_client = ctx.message.guild.voice_client
-    if voice_client.is_playing():
-        voice_client.stop()
-    await play_next(ctx)
-
-# QUEUE DISPLAY COMMAND
-@client.command(name="queue")
-async def queue(ctx):
-    if music_queue:
-        embed = discord.Embed(
-            title="🎶 Current Music Queue 🎶",
-            color=discord.Color.blue()
-        )
-
-        for idx, song in enumerate(music_queue, start=1):
-            embed.add_field(
-                name=f"{idx}. {song['title']}",
-                value=f"**Duration:** {song['duration']}",
-                inline=False
-            )
-        
-        embed.set_footer(text=f"Total songs in queue: {len(music_queue)}")
-        await ctx.send(embed=embed)
-    else:
-        embed = discord.Embed(
-            title="🎶 Current Music Queue 🎶",
-            description="The queue is currently empty.",
-            color=discord.Color.red()
-        )
-        await ctx.send(embed=embed)
-
-# CLEAR QUEUE COMMAND
-@client.command(name="clear", help="Clears the current music queue")
-async def clear(ctx):
-    global music_queue
-    music_queue = []
-    await ctx.send("Music queue cleared!")
-
-# SEARCH MUSIC COMMAND
-@client.command(name="search")
-async def search(ctx, *, query: str):
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'quiet': True,
-        'default_search': 'ytsearch5',
-    }
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(query, download=False)
-        results = info['entries']
-
-        if not results:
-            embed = discord.Embed(
-                title="🔍 YouTube Search Results",
-                description=f"No results found for '{query}'.",
-                color=discord.Color.red()
-            )
-            await ctx.send(embed=embed)
-            return
-
-        embed = discord.Embed(
-            title=f"🔍 Top 5 YouTube Results for '{query}'",
-            color=discord.Color.green()
-        )
-
-        for idx, entry in enumerate(results[:5], start=1):
-            title = entry['title']
-            duration = entry.get('duration')
-            duration_formatted = f"{duration // 60}:{duration % 60:02d}" if duration else "N/A"
-            url = entry['webpage_url']
-            embed.add_field(
-                name=f"{idx}. {title}",
-                value=f"**Duration:** {duration_formatted}\n[Watch]({url})",
-                inline=False
-            )
-        
-        await ctx.send(embed=embed)
-
-# LOOP CURRENT MUSIC COMMAND
-@client.command(name='loop')
-async def loop(ctx):
-    global is_looping
-
-    if ctx.voice_client is None or not ctx.voice_client.is_playing():
-        await ctx.send("No song is currently playing.")
-        return
-
-    is_looping = not is_looping
-    if is_looping:
-        await ctx.send("Looping the current song.")
-    else:
-        await ctx.send("Stopped looping the current song.")
-
-
-def add_to_queue(url: str):
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'quiet': True,
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        duration = str(info['duration'] // 60) + ":" + str(info['duration'] % 60)
-        source = discord.FFmpegPCMAudio(info['url'], **ffmpeg_opts)
-        music_queue.append({'title': info['title'], 'duration': duration, 'source': source})
-
-# LYRICS COMMAND
-@client.command(name="lyrics", help="Fetches the lyrics for the currently playing song")
-async def lyrics(ctx):
-    if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
-        song = music_queue[0] if music_queue else None
-        if song:
-            song_title = song['title']
-            response = requests.get(f"https://api.lyrics.ovh/v1/{song_title}")
-            if response.status_code == 200:
-                data = response.json()
-                lyrics = data.get("lyrics", "No lyrics found")
-                await ctx.send(f"Lyrics for {song_title}:\n{lyrics}")
-            else:
-                await ctx.send("Failed to fetch lyrics.")
-        else:
-            await ctx.send("No song is currently playing.")
-    else:
-        await ctx.send("No song is currently playing.")
-
-# JALEL COMMAND
-urls=['https://www.youtube.com/watch?v=8y4FtO0J4rU',
-      'https://www.youtube.com/watch?v=Yky0ZHBhZxM',
-      'https://www.youtube.com/watch?v=Zu_M3VgzUpk',
-      'https://www.youtube.com/watch?v=lkeGcH2xZ8Y',
-      'https://www.youtube.com/watch?v=4KB7b27_34Q',
-      'https://www.youtube.com/watch?v=OnGLU0UpnBc',
-      'https://www.youtube.com/watch?v=i2NJd2a5P0M',
-      'https://www.youtube.com/watch?v=hyCtOHXcfW0',
-      'https://www.youtube.com/watch?v=YJ_a0v4eJU8',
-      'https://www.youtube.com/watch?v=VIVzi7rUDBA',
-      'https://www.youtube.com/watch?v=Na9jREuExmU',
-      'https://www.youtube.com/watch?v=JEWWmx8jKCk',]
-
-# JALEL COMMAND
-@client.command(name="jalel")
-async def jalel(ctx):
-    shuffle(urls)
-    await play(ctx, urls[0])
-    for url in range(1, 3):
-        add_to_queue(urls[url])
-
-
-
-##################  GAMES  #####################################
-
-# DICE COMMAND
-@client.command(name="dice")
-async def dice(ctx):
-    nb = randint(0,5)
-    nb_list=[':one:',':two:',':three:' ,':four:', ':five:', ':six:']
-    await ctx.send(nb_list[nb])
-
-
-# ROCK PAPER SCISSORS COMMAND
-
-class RPSGame:
-    def __init__(self):
-        self.players = []
-        self.choices = {}
-
-    def add_player(self, player):
-        if len(self.players) < 2:
-            self.players.append(player)
-
-    def make_choice(self, player, choice):
-        self.choices[player] = choice
-
-    def is_ready(self):
-        return len(self.players) == 2 and len(self.choices) == 2
-
-    def determine_winner(self):
-        p1, p2 = self.players
-        c1, c2 = self.choices[p1], self.choices[p2]
-
-        if c1 == c2:
-            return None
-        elif (c1 == "rock" and c2 == "scissors") or \
-             (c1 == "paper" and c2 == "rock") or \
-             (c1 == "scissors" and c2 == "paper"):
-            return p1
-        else:
-            return p2
-
-class RPSView(View):
-    def __init__(self, game):
-        super().__init__(timeout=None)
-        self.game = game
-    @discord.ui.button(label='Rock', style=discord.ButtonStyle.grey, emoji='🧱')
-    async def rock(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_choice(interaction, "rock")
-    @discord.ui.button(label='Paper', style=discord.ButtonStyle.grey, emoji='🧻')
-    async def paper(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_choice(interaction, "paper")
-    @discord.ui.button(label='Scissors', style=discord.ButtonStyle.grey, emoji='✂️')
-    async def scissors(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_choice(interaction, "scissors")
-    @discord.ui.button(label='JOIN', style=discord.ButtonStyle.green, custom_id='join')
-    async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if len(self.game.players) == 0 or (len(self.game.players) == 1 and interaction.user != self.game.players[0]):
-            self.game.add_player(interaction.user)
-            button.disabled = True
-            await interaction.response.edit_message(view=self)
-            await interaction.followup.edit_message(f"{interaction.user.mention} has joined the game!", view=self)
-        else:
-            await interaction.response.send_message("You can't join this game!", ephemeral=True)
-
-    async def handle_choice(self, interaction: discord.Interaction, choice: str):
-        player = interaction.user
-        if player not in self.game.players:
-            await interaction.response.send_message("Chemda5el rabbak!", ephemeral=True)
-            return
-
-        self.game.make_choice(player, choice)
-        await interaction.response.send_message(f"You chose {choice}!", ephemeral=True)
-
-        if self.game.is_ready():
-            winner = self.game.determine_winner()
-            p1, p2 = self.game.players
-            c1, c2 = self.game.choices[p1], self.game.choices[p2]
-            d={'rock':':bricks:', 'paper':':roll_of_paper:', 'scissors':':scissors:' }
-            await interaction.response.edit_message(f"{p1.mention}{d[c1]}  **--**  {p2.mention}{d[c2]}", view=self)
-            if winner:
-                await interaction.followup.send(f"{winner.mention} **wins** !")
-            else:
-                await interaction.followup.send("It's a **tie** !")
-            self.stop()
-
-@client.command(name="rps")
-async def start_rps(ctx):
-    game = RPSGame()
-    view = RPSView(game)
-
-    game.add_player(ctx.author)
-    await ctx.send("Rock-Paper-Scissors game started! Another player must join !", view=view)
-
-
-
-# XOXO GAME
-class TicTacToeButton(Button):
-    def __init__(self, x, y):
-        super().__init__(style=discord.ButtonStyle.secondary, label='\u200b', row=y)
-        self.x = x
-        self.y = y
-
-    async def callback(self, interaction: discord.Interaction):
-        view: TicTacToe = self.view
-        if interaction.user != view.players[view.current_player]:
-            await interaction.response.send_message("It's not your turn !", ephemeral=True)
-            return
-
-        state = view.board[self.y][self.x]
-        if state in ('X', 'O'):
-            return
-
-        if view.current_player == 0:
-            self.style = discord.ButtonStyle.danger
-            self.label = 'X'
-            self.disabled = True
-            view.board[self.y][self.x] = 'X'
-            view.current_player = 1
-        else:
-            self.style = discord.ButtonStyle.success
-            self.label = 'O'
-            self.disabled = True
-            view.board[self.y][self.x] = 'O'
-            view.current_player = 0
-
-        winner = view.check_winner()
-        if winner is not None:
-            for child in view.children:
-                child.disabled = True
-            await interaction.response.edit_message(content=f'{view.players[winner].mention} **wins** !', view=view)
-        elif view.is_full():
-            for child in view.children:
-                child.disabled = True
-            await interaction.response.edit_message(content='It\'s a **tie** !', view=view)
-        else:
-            await interaction.response.edit_message(view=view)
-
-
-class TicTacToe(View):
-    def __init__(self, player1):
-        super().__init__()
-        self.current_player = 0
-        self.board = [[None] * 3 for _ in range(3)]
-        self.players = [player1, None]
-        for y in range(3):
-            for x in range(3):
-                self.add_item(TicTacToeButton(x, y))
-        self.join_button = Button(label="JOIN", style=discord.ButtonStyle.primary)
-        self.join_button.callback = self.join_game
-        self.add_item(self.join_button)
-
-    async def join_game(self, interaction: discord.Interaction):
-        if self.players[1] is None and interaction.user != self.players[0]:
-            self.players[1] = interaction.user
-            self.join_button.disabled = True
-            await interaction.response.edit_message(content=f'{self.players[0].mention}:regional_indicator_x: **VS** {self.players[1].mention}:regional_indicator_o: : Game starts now!', view=self)
-        else:
-            await interaction.response.send_message("You can't join this game !", ephemeral=True)
-
-    def check_winner(self):
-        for line in self.board:
-            if line[0] == line[1] == line[2] and line[0] is not None:
-                return 0 if line[0] == 'X' else 1
-
-        for col in range(3):
-            if self.board[0][col] == self.board[1][col] == self.board[2][col] and self.board[0][col] is not None:
-                return 0 if self.board[0][col] == 'X' else 1
-
-        if self.board[0][0] == self.board[1][1] == self.board[2][2] and self.board[0][0] is not None:
-            return 0 if self.board[0][0] == 'X' else 1
-
-        if self.board[0][2] == self.board[1][1] == self.board[2][0] and self.board[0][2] is not None:
-            return 0 if self.board[0][2] == 'X' else 1
-
-        return None
-
-    def is_full(self):
-        return all(all(cell is not None for cell in row) for row in self.board)
-
-
-@client.command(name='xo')
-async def tic_tac_toe(ctx):
-    view = TicTacToe(ctx.author)
-    await ctx.send('Tic-Tac-Toe: **X** goes first. Click the button below to join as **O**.', view=view)
 
 # Path to the JSON file for storing data
 STATS_FILE = 'russian_roulette_stats.json'
@@ -674,7 +177,7 @@ async def russian_roulette(ctx):
         update_stats(member, stats, disconnected=(member == chosen_member))
     save_stats(stats)
 
-    for _ in range(5):  # Number of cycles through names for dramatic effect
+    for _ in range(3):  # Number of cycles through names for dramatic effect
         for member in members:
             embed.description = f"Selecting... {member.display_name}"
             await countdown_message.edit(embed=embed)
@@ -683,7 +186,7 @@ async def russian_roulette(ctx):
     # Final selection display
     embed = discord.Embed(title="⚡️ Selected for Disconnection", description=f"{chosen_member.mention} has been selected!", color=discord.Color.gold())
     await countdown_message.edit(embed=embed)
-    await asyncio.sleep(2)  # Dramatic pause
+    await asyncio.sleep(1)  # Dramatic pause
 
     # Disconnect the selected member
     await chosen_member.move_to(None)
@@ -737,40 +240,24 @@ async def show_graph(ctx):
     file = discord.File(fp=buffer, filename='russian_roulette_stats.png')
     await ctx.send("Here's the latest version of the Russian Roulette statistics:", file=file)
 
-# HELP COMMAND
-@client.command(name="help", help="Displays this message")
-async def help_command(ctx):
-    embed = Embed(title="Music Bot Help", description="List of commands", color=0x00ff00)
-    commands_list = [
-        ("/join", "Join the voice channel"),
-        ("/leave", "Leave the voice channel"),
-        ("/play <url/name>", "Play a song from YouTube"),
-        ("/pause", "Pause the current song"),
-        ("/resume", "Resume the paused song"),
-        ("/skip", "Skip to the next song in the queue"),
-        ("/loop", "Play the current song in loop until /loop again"),
-        ("/queue", "Display the current music queue"),
-        ("/clear", "Clear the current music queue"),
-        ("/setalarm (hh:mm) (name)", "Set an alarm for you"),
-        ("/dice", "Get a number from 1 to 6"),
-        ("/rps", "Rock-Paper-Scissors Game Co-op"),
-        ("/xo", "Tic-Tac-Toe Game Co-op"),
-        ("/help", "Display this message")
-    ]
-    for name, desc in commands_list:
-        embed.add_field(name=name, value=desc, inline=False)
-    await ctx.send(embed=embed)
 
 # ON COMMAND ERROR
 @client.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
-        await ctx.send(
-            'Invalid Command. Type /help, Retry.')
+        embed = discord.Embed(
+            title='Invalid Command. Type /help, Retry.',
+            color=0xff0000
+            )
+        await ctx.send(embed=embed)
+
 
     if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(
-            'An Argument is Missing, Retry.')
+        embed = discord.Embed(
+            title='An Argument is Missing, Retry.',
+            color=0xff0000
+            )
+        await ctx.send(embed=embed)
 
 # MAIN ENTRY POINT
 def main() -> None:
