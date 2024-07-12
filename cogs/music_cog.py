@@ -1,42 +1,29 @@
-from discord import Intents, Client, VoiceChannel, ButtonStyle, Interaction, Embed
-from discord.ext import commands, tasks
 import discord
+from discord import ButtonStyle, Embed, Interaction
+from discord.ext import commands
 from discord.ui import Button, View
 import yt_dlp
-from yt_dlp import YoutubeDL
 import asyncio
-import requests
 from random import shuffle
 
-urls = [
-    'https://www.youtube.com/watch?v=8y4FtO0J4rU',
-    'https://www.youtube.com/watch?v=Yky0ZHBhZxM',
-    'https://www.youtube.com/watch?v=Zu_M3VgzUpk',
-    'https://www.youtube.com/watch?v=lkeGcH2xZ8Y',
-    'https://www.youtube.com/watch?v=4KB7b27_34Q',
-    'https://www.youtube.com/watch?v=OnGLU0UpnBc',
-    'https://www.youtube.com/watch?v=i2NJd2a5P0M',
-    'https://www.youtube.com/watch?v=hyCtOHXcfW0',
-    'https://www.youtube.com/watch?v=YJ_a0v4eJU8',
-    'https://www.youtube.com/watch?v=VIVzi7rUDBA',
-    'https://www.youtube.com/watch?v=Na9jREuExmU',
-    'https://www.youtube.com/watch?v=JEWWmx8jKCk',
-]
-
-music_queue = []
+# Define FFmpeg options
 ffmpeg_opts = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn',
 }
 
-class MusicControlView(discord.ui.View):
+# Music queue
+music_queue = []
+
+# Music Control View class for interactive buttons
+class MusicControlView(View):
     def __init__(self, ctx, cog):
         super().__init__(timeout=None)
         self.ctx = ctx
         self.cog = cog
 
-    @discord.ui.button(emoji="⏯", style=discord.ButtonStyle.grey, custom_id="pauseplay_button")
-    async def pause_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(emoji="⏯", style=ButtonStyle.grey, custom_id="pauseplay_button")
+    async def pause_button(self, interaction: Interaction, button: Button):
         if interaction.guild.voice_client.is_playing():
             interaction.guild.voice_client.pause()
             await interaction.response.send_message(":pause_button: **Paused**", ephemeral=True)
@@ -46,13 +33,13 @@ class MusicControlView(discord.ui.View):
         else:
             await interaction.response.send_message("Not playing anything at the moment!", ephemeral=True)
 
-    @discord.ui.button(emoji="⏭", style=discord.ButtonStyle.grey, custom_id="skip_button")
-    async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(emoji="⏭", style=ButtonStyle.grey, custom_id="skip_button")
+    async def skip_button(self, interaction: Interaction, button: Button):
         await interaction.response.send_message(":fast_forward: **Skipped**", ephemeral=True)
         await self.cog.skip(self.ctx)
 
-    @discord.ui.button(emoji="<:reacttrash:878915749375246336>", style=discord.ButtonStyle.secondary, custom_id="leave_button")
-    async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(emoji="<:reacttrash:878915749375246336>", style=ButtonStyle.secondary, custom_id="leave_button")
+    async def leave_button(self, interaction: Interaction, button: Button):
         if interaction.guild.voice_client is not None:
             if interaction.user.voice is None or interaction.user.voice.channel != interaction.guild.voice_client.channel:
                 await interaction.response.send_message("Not in the same channel!", ephemeral=True)
@@ -65,12 +52,11 @@ class MusicControlView(discord.ui.View):
 class MusicCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.music_queue = []
 
     @commands.command(name='join')
     async def join(self, ctx):
         if not ctx.message.author.voice:
-            await ctx.send("{} is not connected to a voice channel!".format(ctx.message.author.name))
+            await ctx.send(f"{ctx.message.author.name} is not connected to a voice channel!")
         else:
             channel = ctx.message.author.voice.channel
             if ctx.voice_client is not None:
@@ -112,10 +98,12 @@ class MusicCog(commands.Cog):
         else:
             await ctx.send("The bot is not playing anything at the moment.")
 
-    @commands.command(name="play")
+    @commands.command(name="play", aliases=['p'])
     async def play(self, ctx, url: str):
         await self.join(ctx)
-        if url.startswith("https://www.youtube.com/"):
+        if 'list=' in url:  # Check if the URL is a playlist
+            await self.play_playlist(ctx, url)
+        else:
             self.add_to_queue(url)
             if not ctx.voice_client.is_playing():
                 await self.play_next(ctx)
@@ -127,17 +115,23 @@ class MusicCog(commands.Cog):
                     color=discord.Color.red()
                 )
                 await ctx.send(embed=embed)
+
+    async def play_playlist(self, ctx, playlist_url: str):
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'quiet': True,
+            'extract_flat': True,
+            'playlist_items': '1-5'  # Limit to first 5 items for simplicity
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(playlist_url, download=False)
+            for entry in info['entries']:
+                self.add_to_queue(entry['url'])
+
+        if not ctx.voice_client.is_playing():
+            await self.play_next(ctx)
         else:
-            ydl_opts = {
-                'format': 'bestaudio/best',
-                'quiet': True,
-                'default_search': 'ytsearch1',
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                first_result = info['entries'][0]
-                url = first_result['webpage_url']
-                await self.play(ctx, url=url)
+            await ctx.send(f"Playlist added to queue. Total {len(info['entries'])} songs added.")
 
     async def play_next(self, ctx):
         if music_queue:
@@ -236,10 +230,26 @@ class MusicCog(commands.Cog):
 
     @commands.command(name="jalel")
     async def jalel(self, ctx):
+        urls = [
+            'https://www.youtube.com/watch?v=8y4FtO0J4rU',
+            'https://www.youtube.com/watch?v=Yky0ZHBhZxM',
+            'https://www.youtube.com/watch?v=Zu_M3VgzUpk',
+            'https://www.youtube.com/watch?v=lkeGcH2xZ8Y',
+            'https://www.youtube.com/watch?v=4KB7b27_34Q',
+            'https://www.youtube.com/watch?v=OnGLU0UpnBc',
+            'https://www.youtube.com/watch?v=i2NJd2a5P0M',
+            'https://www.youtube.com/watch?v=hyCtOHXcfW0',
+            'https://www.youtube.com/watch?v=YJ_a0v4eJU8',
+            'https://www.youtube.com/watch?v=VIVzi7rUDBA',
+            'https://www.youtube.com/watch?v=Na9jREuExmU',
+            'https://www.youtube.com/watch?v=JEWWmx8jKCk'
+        ]
         shuffle(urls)
         await self.play(ctx, urls[0])
-        for url in range(1, 3):
-            self.add_to_queue(urls[url])
+        for url in urls[1:4]:
+            self.add_to_queue(url)
+
+
 
 async def setup(bot):
     await bot.add_cog(MusicCog(bot))
