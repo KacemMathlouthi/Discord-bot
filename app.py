@@ -1,19 +1,11 @@
 import os
 from dotenv import load_dotenv
-from discord import Intents, Client, Message, VoiceChannel, ButtonStyle, Interaction, Embed, app_commands, utils
-from discord.ext import commands, tasks
+from discord import Intents, Message, Embed
+from discord.ext import commands
 import discord
 from groq import Groq
 import asyncio
-import requests
-from random import randint
-from random import shuffle
-import random
-import json
-import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
-from io import BytesIO
+
 
 
 

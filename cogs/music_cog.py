@@ -38,7 +38,7 @@ class MusicControlView(View):
         await interaction.response.send_message(":fast_forward: **Skipped**", ephemeral=True)
         await self.cog.skip(self.ctx)
 
-    @discord.ui.button(emoji="<:reacttrash:878915749375246336>", style=ButtonStyle.secondary, custom_id="leave_button")
+    @discord.ui.button(emoji="<:dusto:746149609306456085>", style=ButtonStyle.secondary, custom_id="leave_button")
     async def leave_button(self, interaction: Interaction, button: Button):
         if interaction.guild.voice_client is not None:
             if interaction.user.voice is None or interaction.user.voice.channel != interaction.guild.voice_client.channel:
@@ -101,19 +101,35 @@ class MusicCog(commands.Cog):
     @commands.command(name="play", aliases=['p'])
     async def play(self, ctx, url: str):
         await self.join(ctx)
-        if 'list=' in url:  # Check if the URL is a playlist
+        if 'list=' in url:
             await self.play_playlist(ctx, url)
         else:
+            if 'https://www.youtube.com/watch?' not in url:
+                ydl_opts = {
+                    'format': 'bestaudio/best',
+                    'quiet': True,
+                    'default_search': 'ytsearch1',
+                }
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    if info['entries']:
+                        url = info['entries'][0]['webpage_url']
+
+                
             self.add_to_queue(url)
             if not ctx.voice_client.is_playing():
                 await self.play_next(ctx)
             else:
                 info = music_queue[-1]
                 embed = discord.Embed(
-                    title="Added to Queue",
-                    description=f"**Title:** {info['title']}\n**Duration:** {info['duration']}\n**Position in Queue:** {len(music_queue)}",
-                    color=discord.Color.red()
+                    title="🎵 Added to Queue",
+                    description=f"**Title:** [{info['title']}]({info['url']})\n"
+                                f"**Duration:** `{info['duration']}`\n"
+                                f"**Position in Queue:** `{len(music_queue)}`",
+                    color=discord.Color.green()
                 )
+                embed.set_footer(text="Use !queue to view the full queue")
+                embed.set_thumbnail(url=info.get('thumbnail', ''))
                 await ctx.send(embed=embed)
 
     async def play_playlist(self, ctx, playlist_url: str):
@@ -131,7 +147,16 @@ class MusicCog(commands.Cog):
         if not ctx.voice_client.is_playing():
             await self.play_next(ctx)
         else:
-            await ctx.send(f"Playlist added to queue. Total {len(info['entries'])} songs added.")
+            embed = discord.Embed(
+                title="🎶 Playlist Added to Queue",
+                description=f"**Playlist Name:** [{info['title']}]({playlist_url})\n"
+                            f"**Total Songs Added:** `{len(info['entries'])}`",
+                color=discord.Color.blue()
+            )
+            embed.set_thumbnail(url=info.get('thumbnail', ''))
+            embed.set_footer(text="Now playing the first song in the playlist")
+            await ctx.send(embed=embed)
+
 
     async def play_next(self, ctx):
         if music_queue:
@@ -188,7 +213,7 @@ class MusicCog(commands.Cog):
         ydl_opts = {
             'format': 'bestaudio/best',
             'quiet': True,
-            'default_search': 'ytsearch5',
+            'default_search': 'ytsearch2',  # Set to 'ytsearch2' to limit the search to 2 results
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(query, download=False)
@@ -202,10 +227,10 @@ class MusicCog(commands.Cog):
                 await ctx.send(embed=embed)
                 return
             embed = discord.Embed(
-                title=f"🔍 Top 5 YouTube Results for '{query}'",
+                title=f"🔍 Top 2 YouTube Results for '{query}'",
                 color=discord.Color.green()
             )
-            for idx, entry in enumerate(results[:5], start=1):
+            for idx, entry in enumerate(results[:2], start=1):  # Only process the first 2 results
                 title = entry['title']
                 duration = entry.get('duration')
                 duration_formatted = f"{duration // 60}:{duration % 60:02d}" if duration else "N/A"
@@ -216,6 +241,7 @@ class MusicCog(commands.Cog):
                     inline=False
                 )
             await ctx.send(embed=embed)
+
 
     def add_to_queue(self, url: str):
         ydl_opts = {
